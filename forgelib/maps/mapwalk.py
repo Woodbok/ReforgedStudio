@@ -114,7 +114,7 @@ def defined_uids(game, archive, skip_errors=True):
 
 def map_archives(game):
     shared = {'DataPC.forge', 'DataPC_extra.forge', 'DataPC_extraparams.forge', 'DataPC_CoreFX.forge', 'DataPC_Fire.forge', 'DataPC_localization.forge'}
-    return sorted((a for a in os.listdir(ROOTS[game]) if a.endswith('.forge') and a not in shared and ('_skins_' not in a)))
+    return sorted((a for a in os.listdir(ROOTS[game]) if a.endswith('.forge') and a not in shared and ('_skins_' not in a) and (not paths.foreign_archive(game, a))))
 
 def main(argv):
     games = argv or ['ACR', 'AC3']

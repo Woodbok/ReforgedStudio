@@ -28,7 +28,7 @@ UNDER = (np.array([[0.0, 0.0, -50.0], [0.01, 0.0, -50.0], [0.0, 0.01, -50.0]]), 
 PLAIN = {'Visual', 'GuidanceSystem', 'InertComponent'}
 GROUND = re.compile('_Ground_.*_LOD0_Chunk_', re.I)
 SKIN_OK = re.compile('Branch_AmericanElm', re.I)
-DROP = re.compile('Water_?Puddle|^GFX_|Flags|Glow|Placeholder|OutOfMemory|Caustic|Flames|EagleVision', re.I)
+DROP = re.compile('Water_?Puddle|^GFX_|Flags|Glow|Placeholder|OutOfMemory|Caustic', re.I)
 NO_TWIN = re.compile('Windows|FabricDirty|WoodPanelShops', re.I)
 CUTOUT = re.compile('_AT(_|$)|_VA(_|$)|Leaves|Weeds|FishNet|Hay|Flags|Puddle|BirdShit|Decal|CobWeb|Chains', re.I)
 FOLIAGE = re.compile('Leaves|Weeds|FishNet|Hay|Flags|CobWeb', re.I)
@@ -538,18 +538,6 @@ def collision_density(P, log=print, limit=DENSITY_MAX):
     if peak[1] > limit:
         raise SystemExit("collision too dense there: a query would overrun the engine's contact scratch (0x86EC7F)")
     return peak[1]
-FLATCOLOR = re.compile('FlatColor', re.I)
-
-def sp_texture(A, mat_uid, max_size=512):
-    tu = A.material_texture_uid(mat_uid) if mat_uid else None
-    tx = A.texture_rgba(tu, max_size=max_size) if tu else None
-    if tx and FLATCOLOR.search(tx[0] or ''):
-        c = A.material_params(mat_uid).get('Layer0_Color')
-        if c:
-            rgba = np.array(tx[1], copy=True)
-            rgba[:, :, :3] = np.clip(np.round(rgba[:, :, :3] * np.array(c[:3]) * 2.0), 0, 255).astype(np.uint8)
-            tx = (tx[0], rgba)
-    return tx
 
 def second_layer(A, mat_uid, out, max_size=512):
     lay = A.material_layers(mat_uid)
@@ -692,8 +680,7 @@ class Convert:
                 skipped['under min_top (SP mission copies under the map)'] += 1
                 continue
             c = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
-            pl = np.array(m, dtype=np.float64).reshape(4, 4)[3, :2]
-            if any((re.search(rx, name, re.I) and min(math.hypot(c[0] + c_.shift[0] - x, c[1] + c_.shift[1] - y), math.hypot(pl[0] + c_.shift[0] - x, pl[1] + c_.shift[1] - y)) <= r for rx, x, y, r in c_.drop_near)):
+            if any((re.search(rx, name, re.I) and math.hypot(c[0] + c_.shift[0] - x, c[1] + c_.shift[1] - y) <= r for rx, x, y, r in c_.drop_near)):
                 skipped['left out by name and place (drop_near)'] += 1
                 continue
             state = 'in'
@@ -1206,7 +1193,8 @@ class Convert:
             Mx = np.array(m, dtype=np.float64).reshape(4, 4)
             for p in parts:
                 if p['material'] not in mats:
-                    tx = sp_texture(A, p['material'])
+                    tu = A.material_texture_uid(p['material']) if p['material'] else None
+                    tx = A.texture_rgba(tu, max_size=512) if tu else None
                     mo = A.obj(p['material']) if p['material'] else None
                     mats[p['material']] = (mo['name'] if mo else 'none', tx[1] if tx else None)
                     if c_.flat_multi and tx and mo and mo['name'].lower().endswith('_multi'):
@@ -1431,7 +1419,8 @@ class Convert:
                     perches_by_tile[tt].append((A_ - tile_origin(tt), B__ - tile_origin(tt)))
             for p in parts:
                 if p['material'] not in mats:
-                    tx = sp_texture(A, p['material'])
+                    tu = A.material_texture_uid(p['material']) if p['material'] else None
+                    tx = A.texture_rgba(tu, max_size=512) if tu else None
                     mo = A.obj(p['material']) if p['material'] else None
                     mats[p['material']] = (mo['name'] if mo else 'none', tx[1] if tx else None)
                 if DROP.search(mats[p['material']][0]):

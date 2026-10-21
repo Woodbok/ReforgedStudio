@@ -55,7 +55,7 @@ import types
 import numpy as np
 
 from . import mapdata as M  # first: puts forgelib and ac3codec on the path
-from . import collision, duplicate, mopp, spawns
+from . import collision, duplicate, games, mopp, spawns
 from .newmodel import _comp, _cell_of, morton
 from ac3codec import Handle, Obj, Ptr, Ref, Root  # noqa: E402
 from datafile import compress, decompress  # noqa: E402  (forgelib)
@@ -76,7 +76,7 @@ KINDS = collections.OrderedDict([
     ("blend_group", "GameplayCoordinatorComponent"),
 ])
 MODE_KINDS = ("artifact", "scoring_zone", "domination_point")
-STOCK = ("Animus", "Boston_Brewer", "Boston_Harbou", "Boston_Mill", "Fort_Wolcott", "Iceberg", "Plantation")
+STOCK = games.target().stock_maps
 SINK = 150.0      # removed objects sink this far: collision.SINK_DEPTH (a chase-breaker door / lift sunk 1 km is outside
                   # the Havok world and crashes the game when the match is left)
 CATALOG_VERSION = 6                                # the cached catalog's Thing layout (a new version rebuilds the cache)
@@ -461,8 +461,9 @@ def summary(info):
 
 def stock_maps():
     from . import install
-    return [os.path.join(install.PRISTINE, f"DataPC_AC3MP_{m}.forge") for m in STOCK
-            if os.path.exists(os.path.join(install.PRISTINE, f"DataPC_AC3MP_{m}.forge"))]
+    T = games.target()
+    return [os.path.join(install.PRISTINE, T.stock_file(m)) for m in STOCK
+            if os.path.exists(os.path.join(install.PRISTINE, T.stock_file(m)))]
 
 
 def catalog(kind=None, maps=None, refresh=False):

@@ -71,11 +71,12 @@ import library  # noqa: E402
 import maps  # noqa: E402
 import plan  # noqa: E402
 import scene_cache  # noqa: E402
-from ac3editor import install, mapdata  # noqa: E402
+from ac3editor import games, install, mapdata  # noqa: E402
 
 
 def cmd_hello(_a):
-    return dict(protocol=PROTOCOL, repo=REPO, python=sys.version.split()[0])
+    T = games.target()
+    return dict(protocol=PROTOCOL, repo=REPO, python=sys.version.split()[0], game=T.key, game_title=T.title)
 
 
 def cmd_maps(_a):
@@ -311,6 +312,18 @@ def cmd_sp_build(a):
     return sparea.run_child(a["request"], log=log)
 
 
+def cmd_import_maps(_a):
+    """The other games' installs and their maps with an import recipe."""
+    import mapimport
+    return mapimport.catalogue(log=log)
+
+
+def cmd_import_build(a):
+    """A map imported from another game (a child process; minutes) -> its result (dest: the new map's archive)."""
+    import mapimport
+    return mapimport.run_child(a["request"], log=log)
+
+
 def cmd_assets(a):
     path, metas = library.asset_scene(a["keys"], log=log)
     return dict(cache=path, keys=a["keys"], assets=metas)
@@ -433,7 +446,7 @@ def cmd_status(a):
     live = os.path.join(install.LIVE, name)
     release = install.original_of(name)
     return dict(live=live, exists=os.path.exists(live), original=install.is_original(name), release=release,
-                game=os.path.dirname(install.LIVE), exe=os.path.join(os.path.dirname(install.LIVE), "AC3MP.exe"),
+                game=os.path.dirname(install.LIVE), exe=os.path.join(os.path.dirname(install.LIVE), games.target().exe_name),
                 from_release=os.path.normcase(os.path.abspath(release)) == os.path.normcase(os.path.abspath(a["archive"])))
 
 

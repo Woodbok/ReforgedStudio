@@ -19,6 +19,40 @@ def world(game, archive):
 
 def markers(body):
     ids = convert.class_ids()
+    if _MARKERS.get('n') != len(ids):
+        rev = {v: k for k, v in ids.items() if k not in NOT_COMPONENTS}
+        top = keys = None
+        try:
+            import numpy as np
+            keys = np.array(sorted(rev), dtype=np.uint32)
+            top = np.zeros(1 << 16, dtype=bool)
+            top[keys >> 16] = True
+        except ImportError:
+            pass
+        _MARKERS.update(n=len(ids), rev=rev, top=top, keys=keys)
+    rev, top, keys = (_MARKERS['rev'], _MARKERS['top'], _MARKERS['keys'])
+    if top is None:
+        return _markers_py(body)
+    import numpy as np
+    out = []
+    for j in range(4):
+        m = (len(body) - j) // 4
+        if m <= 0:
+            continue
+        v = np.frombuffer(body, dtype='<u4', count=m, offset=j)
+        idx = np.flatnonzero(top[v >> 16])
+        if not idx.size:
+            continue
+        vals = v[idx]
+        pos = np.minimum(np.searchsorted(keys, vals), len(keys) - 1)
+        hit = keys[pos] == vals
+        out += [(j + 4 * i, rev[x]) for i, x in zip(idx[hit].tolist(), vals[hit].tolist())]
+    out.sort()
+    return out
+_MARKERS = {}
+
+def _markers_py(body):
+    ids = convert.class_ids()
     rev = {v: k for k, v in ids.items() if k not in NOT_COMPONENTS}
     out = []
     for k in range(0, len(body) - 3):

@@ -31,27 +31,35 @@ def definitions_index(archive):
     return out
 
 def _definitions_index_records(archive):
+    import parallel_read
     import record_cache
     store = record_cache.Store('defs')
     out = {}
-    with Forge(archive) as f:
-        for r in f.records:
-            raw = f.read(r)
-            key = record_cache.digest(raw)
-            if key not in store:
-                items = []
-                try:
-                    d = decompress(raw)
-                    for o, s, _ in walk(d):
-                        ob = object_at(d, o, s)
-                        items.append((ob['uid'], digest(ob['body'])))
-                except Exception:
-                    pass
-                store.put(key, items)
-            for uid, bd in store.get(key):
-                out.setdefault(uid, []).append((r.name, bd))
+    plan, todo, planned = ([], [], set())
+    for r, key, _is_object in record_cache.record_digests(archive):
+        plan.append((r, key))
+        if key not in store and key not in planned:
+            planned.add(key)
+            todo.append(r)
+    done = dict(zip((r.index for r in todo), parallel_read.map_records(archive, todo, _definitions_items)))
+    for r, key in plan:
+        if r.index in done:
+            store.put(key, done[r.index])
+        for uid, bd in store.get(key):
+            out.setdefault(uid, []).append((r.name, bd))
     store.save()
     return out
+
+def _definitions_items(raw):
+    items = []
+    try:
+        d = decompress(raw)
+        for o, s, _ in walk(d):
+            ob = object_at(d, o, s)
+            items.append((ob['uid'], digest(ob['body'])))
+    except Exception:
+        pass
+    return items
 
 def _definitions_index_full(archive):
     out = {}
@@ -139,36 +147,81 @@ def nested_index(archive, nested_ids):
     return index
 
 def _nested_index_records(archive, nested_ids):
+    import parallel_read
     import record_cache
     stores = {c: record_cache.Store(f'nested_{c:08X}') for c in set(nested_ids)}
     index = {}
-    with Forge(archive) as f:
-        for r in f.records:
-            raw = f.read(r)
-            if raw[4:8] != b'3\xaa\xfbW':
-                continue
-            key = record_cache.digest(raw)
-            missing = [c for c, s in stores.items() if key not in s]
-            if missing:
-                try:
-                    d = decompress(raw)
-                except Exception:
-                    d = None
-                for c in missing:
-                    found = set()
-                    if d is not None:
-                        nb = struct.pack('<I', c)
-                        j = d.find(nb, 4)
-                        while j >= 0:
-                            found.add(struct.unpack_from('<I', d, j - 4)[0])
-                            j = d.find(nb, j + 1)
-                    stores[c].put(key, tuple(sorted(found)))
-            for s in stores.values():
-                for v in s.get(key):
-                    index.setdefault(v, set()).add(r.name)
+    plan, todo, extras, planned = ([], [], [], set())
+    for r, key, is_object in record_cache.record_digests(archive):
+        if not is_object:
+            continue
+        missing = [c for c, s in stores.items() if key not in s and (c, key) not in planned]
+        planned.update(((c, key) for c in missing))
+        plan.append((r, key, missing))
+        if missing:
+            todo.append(r)
+            extras.append((missing,))
+    done = dict(zip((r.index for r in todo), parallel_read.map_records(archive, todo, _nested_values, extras)))
+    for r, key, missing in plan:
+        for c, found in zip(missing, done.get(r.index, ())):
+            stores[c].put(key, found)
+        for s in stores.values():
+            for v in s.get(key):
+                index.setdefault(v, set()).add(r.name)
     for s in stores.values():
         s.save()
     return index
+
+def _nested_values(raw, classes):
+    try:
+        d = decompress(raw)
+    except Exception:
+        return [() for _c in classes]
+    try:
+        import numpy as np
+    except ImportError:
+        return _nested_values_py(raw, classes, d)
+    key = tuple(sorted(set(classes)))
+    if key not in _NESTED_TABLES:
+        keys = np.array(key, dtype=np.uint32)
+        top = np.zeros(1 << 16, dtype=bool)
+        top[keys >> 16] = True
+        _NESTED_TABLES[key] = (keys, top)
+    keys, top = _NESTED_TABLES[key]
+    found = {c: set() for c in key}
+    for j in range(4):
+        m = (len(d) - j) // 4
+        if m <= 1:
+            continue
+        v = np.frombuffer(d, dtype='<u4', count=m, offset=j)
+        idx = np.flatnonzero(top[v[1:] >> 16]) + 1
+        if not idx.size:
+            continue
+        vals = v[idx]
+        pos = np.minimum(np.searchsorted(keys, vals), len(keys) - 1)
+        hit = keys[pos] == vals
+        for c, u in zip(vals[hit].tolist(), v[idx[hit] - 1].tolist()):
+            found[c].add(u)
+    return [tuple(sorted(found[c])) for c in classes]
+_NESTED_TABLES = {}
+
+def _nested_values_py(raw, classes, d=None):
+    if d is None:
+        try:
+            d = decompress(raw)
+        except Exception:
+            d = None
+    out = []
+    for c in classes:
+        found = set()
+        if d is not None:
+            nb = struct.pack('<I', c)
+            j = d.find(nb, 4)
+            while j >= 0:
+                found.add(struct.unpack_from('<I', d, j - 4)[0])
+                j = d.find(nb, j + 1)
+        out.append(tuple(sorted(found)))
+    return out
 
 def _nested_index_full(archive, nested_ids):
     index = {}

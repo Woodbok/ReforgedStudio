@@ -16,7 +16,7 @@ from forge import Forge, UnsupportedForge
 from datafile import decompress, DatafileError
 from objects import walk, ObjectError
 from transplant import object_at
-AC4 = os.path.join(os.path.dirname(os.path.dirname(paths.AC3)), "Assassin's Creed IV Black Flag", 'multi')
+AC4 = paths.install('AC4')['mp_dir']
 AC4_SOUND = os.path.join(AC4, 'sounddata', 'pc')
 AC3 = paths.AC3_SOURCE
 AC3_SOUND = os.path.join(paths.AC3_SOURCE, 'sounddata', 'Pc')
@@ -24,7 +24,7 @@ OUT = os.path.join(ROOT, 'out', 'ac4')
 AC4_MAPS = {'Havana': 'DataPC_ACGA_Havana.forge', 'Prison': 'DataPC_ACGA_Prison.forge', 'FisherVillage': 'DataPC_ACGA_FisherVillage.forge', 'Expedition': 'DataPC_ACGA_Expedition.forge', 'PirateHQ': 'DataPC_ACGA_Pirate_Headqua.forge', 'SecretPirate': 'DataPC_ACGA_Secret_Pirate_.forge', 'Kingston': 'DataPC_ACGA_KINGSTON_dlc.forge', 'Tutorial': 'DataPC_ACGAMP_Tutorial_Map.forge'}
 MSETTLEMENT = 'DataPC_AC3MP_MSettlement.forge'
 SHARED_MAPS = {'Whiteroom': ('DataPC_AC2MP_Whiteroom.forge', 'DataPC_AC2MP_Whiteroom.forge'), 'Plantation': ('DataPC_AC3MP_Plantation.forge', 'DataPC_AC3MP_Plantation_dlc.forge'), 'Charlestown': ('DataPC_AC3MP_Charlestown_dlc.forge', 'DataPC_AC3MP_Charlestown_dlc.forge'), 'FortMathieu': ('DataPC_AC3MP_FortMathieu_dlc.forge', 'DataPC_AC3MP_FortMathieu_dlc.forge'), 'Martinique': ('DataPC_AC3MP_Martinique_dlc.forge', 'DataPC_AC3MP_Martinique.forge')}
-AC3_COPY = os.path.join(os.path.dirname(paths.AC3) + ' - Copy', 'multi')
+AC3_COPY = paths.AC3_SOURCE
 AC3_FOLDERS = (AC3, AC3_COPY, paths.AC3) + tuple(sorted(glob.glob(os.path.join(ROOT, 'out', 'dlcmaps', '*'))))
 
 def ac3_archive(name):
@@ -40,7 +40,7 @@ def ac4_archive(name):
     if not os.path.isfile(p):
         raise FileNotFoundError(p)
     return p
-REG = pickle.load(open(os.path.join(ROOT, 'crossmaps', '_reg.pkl'), 'rb'))
+REG = pickle.load(open(os.path.join(ROOT, 'out', 'reg', 'class_registries.pkl'), 'rb'))
 AC3_CLASSES = set(REG['AC3'].values())
 
 def cls(type_id, game='AC4'):

@@ -40,17 +40,11 @@ def parents(game='AC3'):
         pe = PE(exe_registry.ACR if game == 'ACR' else exe_registry.AC3)
         names = exe_registry.string_table(pe)
         rec = {}
-        for sec, _sva, _vsize, raw, rawsize in pe.sections:
-            if sec not in ('.data', '.rdata'):
-                continue
-            end = min(raw + rawsize, len(pe.data)) - 16
-            for off in range(raw, end, 4):
-                text = names.get(struct.unpack_from('<I', pe.data, off)[0])
-                if text is None:
-                    continue
-                parent, cid, size = struct.unpack_from('<III', pe.data, off + 4)
-                if cid >= 1 << 24 and cid != 4294967295 and (size <= 65536):
-                    rec[cid] = (text, parent)
+        for off in exe_registry.record_offsets(pe, names):
+            text = names[struct.unpack_from('<I', pe.data, off)[0]]
+            parent, cid, size = struct.unpack_from('<III', pe.data, off + 4)
+            if cid >= 1 << 24 and cid != 4294967295 and (size <= 65536):
+                rec[cid] = (text, parent)
         _PARENTS[game] = {text: rec[parent][0] if parent in rec else None for cid, (text, parent) in rec.items()}
     return _PARENTS[game]
 

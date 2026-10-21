@@ -1,5 +1,8 @@
 """forgelib/datafile.py: part of forgelib, the AC3 archive and map library Reforged Studio runs on."""
+import ctypes
+import os
 import struct
+import zlib
 import lzo1x
 MAGIC = 1476110899
 VERSION = 268761753
@@ -11,6 +14,9 @@ class DatafileError(Exception):
     pass
 
 def checksum(data):
+    return zlib.adler32(data, 0)
+
+def _checksum_py(data):
     a = b = 0
     for byte in data:
         a += byte
@@ -35,6 +41,17 @@ _WINDOW = 8191
 _CHAIN = 32
 
 def lzo2a_compress(block):
+    lib = _native()
+    if lib is not None and len(block) <= 65535:
+        data = bytes(block)
+        cap = 2 * len(data) + 64
+        buf = ctypes.create_string_buffer(cap)
+        n = lib.ac3lzo_lzo2a_compress(data, len(data), buf, cap)
+        if n >= 0:
+            return buf.raw[:n]
+    return _lzo2a_compress_py(block)
+
+def _lzo2a_compress_py(block):
     data = bytes(block)
     n = len(data)
     out = bytearray()
@@ -129,7 +146,7 @@ COMP_CACHE_MIN_BLOCK = 4096
 
 def _lzo2a_compress_cached(block):
     import os
-    if len(block) < COMP_CACHE_MIN_BLOCK or os.environ.get('AC3FORGE_NO_DECOMP_CACHE'):
+    if len(block) < COMP_CACHE_MIN_BLOCK or os.environ.get('AC3FORGE_NO_DECOMP_CACHE') or _native() is not None:
         return lzo2a_compress(block)
     import hashlib
     import zlib
@@ -408,14 +425,35 @@ def _lzo2a_fast(data, expected_size, window):
         copy(m_pos, length)
     raise DatafileError('no end-of-stream marker')
 LZO2A = _lzo2a_fast
+NATIVE_DLL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'native', 'ac3lzo.dll')
+_NATIVE = None
+
+def _native():
+    global _NATIVE
+    if _NATIVE is None:
+        _NATIVE = False
+        if not os.environ.get('AC3FORGE_NO_NATIVE') and os.path.exists(NATIVE_DLL):
+            try:
+                lib = ctypes.CDLL(NATIVE_DLL)
+                if lib.ac3lzo_version() == 1:
+                    i64, p = (ctypes.c_int64, ctypes.c_void_p)
+                    lib.ac3lzo_payload_size.argtypes = (ctypes.c_char_p, i64)
+                    lib.ac3lzo_payload_size.restype = i64
+                    lib.ac3lzo_payload_decode.argtypes = (ctypes.c_char_p, i64, p, i64, ctypes.POINTER(i64))
+                    lib.ac3lzo_payload_decode.restype = ctypes.c_int
+                    lib.ac3lzo_lzo2a_compress.argtypes = (ctypes.c_char_p, i64, p, i64)
+                    lib.ac3lzo_lzo2a_compress.restype = i64
+                    _NATIVE = lib
+            except (OSError, AttributeError):
+                pass
+    return _NATIVE or None
 DECOMP_CACHE = __import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)), 'out', 'cache', 'decomp')
 COMP_CACHE = __import__('os').path.join(__import__('os').path.dirname(DECOMP_CACHE), 'comp')
 CACHE_MIN_PAYLOAD = 16 * 1024
 CACHE_MIN_SECONDS = 0.05
 
 def decompress(payload):
-    import os
-    if len(payload) < CACHE_MIN_PAYLOAD or os.environ.get('AC3FORGE_NO_DECOMP_CACHE'):
+    if len(payload) < CACHE_MIN_PAYLOAD or os.environ.get('AC3FORGE_NO_DECOMP_CACHE') or _native() is not None:
         return _decompress_uncached(payload)
     import hashlib
     import time
@@ -439,6 +477,27 @@ def decompress(payload):
     return data
 
 def _decompress_uncached(payload):
+    lib = _native()
+    if lib is not None:
+        data = _decompress_native(lib, payload)
+        if data is not None:
+            return data
+    return _decompress_python(payload)
+
+def _decompress_native(lib, payload):
+    if not isinstance(payload, bytes):
+        payload = bytes(payload)
+    n = lib.ac3lzo_payload_size(payload, len(payload))
+    if n <= 0:
+        return None
+    buf = bytearray(n)
+    got = ctypes.c_int64(0)
+    rc = lib.ac3lzo_payload_decode(payload, len(payload), (ctypes.c_char * n).from_buffer(buf), n, ctypes.byref(got))
+    if rc or got.value != n:
+        return None
+    return bytes(buf)
+
+def _decompress_python(payload):
     out = bytearray()
     o = 4
     while o + CHUNK_HEADER_SIZE <= len(payload):
@@ -483,36 +542,90 @@ def _check_lzo(archives):
     import time
     from forge import Forge
     global LZO2A
+    ref = archives[:1] == ['--ref']
+    archives = archives[1:] if ref else archives
+    lib = _native()
+    print(f"native: {(NATIVE_DLL if lib is not None else 'not loaded - comparing the Python with itself')}")
     bad = 0
     for path in archives:
-        n = t_fast = t_ref = 0
+        n = native = t_new = t_py = t_ref = 0
         with Forge(path) as f:
             for r in f.records:
                 raw = f.read(r)
                 res = []
-                for dec in (_lzo2a_fast, _lzo2a):
-                    LZO2A = dec
-                    t0 = time.time()
+                for kind in ('new', 'py') + (('ref',) if ref else ()):
+                    LZO2A = _lzo2a if kind == 'ref' else _lzo2a_fast
+                    t0 = time.perf_counter()
                     try:
-                        res.append(('ok', _decompress_uncached(raw)))
+                        if kind == 'new':
+                            got = _decompress_native(lib, raw) if lib is not None else None
+                            native += got is not None
+                            res.append(('ok', got if got is not None else _decompress_python(raw)))
+                        else:
+                            res.append(('ok', _decompress_python(raw)))
                     except Exception as e:
                         res.append(('err', f'{type(e).__name__}: {e}'))
-                    dt = time.time() - t0
-                    if dec is _lzo2a_fast:
-                        t_fast += dt
+                    dt = time.perf_counter() - t0
+                    if kind == 'new':
+                        t_new += dt
+                    elif kind == 'py':
+                        t_py += dt
                     else:
                         t_ref += dt
                 LZO2A = _lzo2a_fast
                 n += 1
-                if res[0] != res[1]:
+                if any((x != res[0] for x in res[1:])):
                     bad += 1
-                    print(f'  DIFFERS: {path} {r.name}: {res[0][0]} / {res[1][0]}')
-        print(f'{path}: {n} records, identical {n - bad}; fast {t_fast:.0f} s, original {t_ref:.0f} s', flush=True)
+                    print(f"  DIFFERS: {path} {r.name}: {' / '.join((x[0] for x in res))}")
+        print(f'{path}: {n} records, identical {n - bad} (native decoded {native}, Python fallback {n - native}); native {t_new:.1f} s, Python {t_py:.0f} s' + (f', original {t_ref:.0f} s' if ref else ''), flush=True)
+    sys.exit(1 if bad else 0)
+
+def _check_pack(archives):
+    import sys
+    import time
+    from forge import Forge
+    every = 1
+    if archives[:1] == ['--every']:
+        every, archives = (int(archives[1]), archives[2:])
+    lib = _native()
+    print(f"native: {(NATIVE_DLL if lib is not None else 'not loaded - comparing the Python with itself')}")
+    bad = 0
+    for path in archives:
+        n = blocks = 0
+        t_new = t_py = 0.0
+        with Forge(path) as f:
+            for k, r in enumerate(f.records):
+                if k % every:
+                    continue
+                try:
+                    payload = f.read(r)
+                    data = decompress(payload)
+                    first = first_chunk_raw_size(payload)
+                except Exception:
+                    continue
+                n += 1
+                for part in (data[:first], data[first:]):
+                    for i in range(0, len(part), 32768):
+                        block = part[i:i + 32768]
+                        blocks += 1
+                        t0 = time.perf_counter()
+                        a = lzo2a_compress(block)
+                        t1 = time.perf_counter()
+                        b = _lzo2a_compress_py(block)
+                        t2 = time.perf_counter()
+                        t_new += t1 - t0
+                        t_py += t2 - t1
+                        if a != b or checksum(block) != _checksum_py(block) or checksum(a) != _checksum_py(a):
+                            bad += 1
+                            print(f'  DIFFERS: {path} {r.name} block at {i}')
+        print(f'{path}: {n} records, {blocks} blocks, identical {blocks - bad}; native {t_new:.1f} s, Python {t_py:.0f} s', flush=True)
     sys.exit(1 if bad else 0)
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 2 and sys.argv[1] == '--check-lzo':
         _check_lzo(sys.argv[2:])
+    if len(sys.argv) > 2 and sys.argv[1] == '--check-pack':
+        _check_pack(sys.argv[2:])
 
 def _check_cache(archives):
     import sys

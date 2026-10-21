@@ -1,0 +1,21 @@
+{
+ "game": "ACR", "edition": "MP", "title": "Assassin's Creed Revelations multiplayer", "short": "ACR",
+ "install": {
+  "guesses": ["%PF86%\\Steam\\steamapps\\common\\Assassin's Creed Revelations",
+              "%PF86%\\Ubisoft\\Ubisoft Game Launcher\\games\\Assassin's Creed Revelations",
+              "%PF86%\\Ubisoft\\Assassin's Creed Revelations"],
+  "mp_subdir": "multi",
+  "exe": "ACRMP.exe",
+  "markers": ["DataPC.forge"]
+ },
+ "container": {"version": 25, "compression": "lzo2a", "id_size": 4, "write": null},
+ "schema": {"from": "exe", "layout": "ac3"},
+ "archives": {
+  "shared": ["DataPC.forge", "DataPC_extra.forge", "DataPC_CoreFX.forge", "DataPC_Fire.forge", "DataPC_extraparams.forge",
+             "DataPC_localization.forge"],
+  "map_prefix": "DataPC_", "map_suffix": ".forge", "map_exclude": ["DataPC_skins_", "DataPC_AC2MP_Whiteroom"]
+ },
+ "maps": {"prefixes": ["ACFE_", "AC2MP_", "ACR_"]},
+ "capabilities": {"open": false, "source": true, "build": false, "install": false, "characters": false,
+                  "import_source": true}
+}

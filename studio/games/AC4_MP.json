@@ -1,0 +1,20 @@
+{
+ "game": "AC4", "edition": "MP", "title": "Assassin's Creed IV Black Flag multiplayer", "short": "AC4",
+ "install": {
+  "guesses": ["%PF86%\\Ubisoft\\Ubisoft Game Launcher\\games\\Assassin's Creed IV Black Flag",
+              "%PF86%\\Steam\\steamapps\\common\\Assassin's Creed IV Black Flag",
+              "%PF86%\\Ubisoft\\Assassin's Creed IV Black Flag"],
+  "mp_subdir": "multi",
+  "exe": "AC4BFMP.exe",
+  "markers": ["DataPC.forge"]
+ },
+ "container": {"version": 26, "compression": "lzo1x", "id_size": 4, "write": null},
+ "schema": {"from": "exe", "layout": "ac4"},
+ "archives": {
+  "shared": ["DataPC.forge", "DataPC_extra.forge", "DataPC_CoreFX.forge", "DataPC_Fire.forge", "DataPC_extraparams.forge"],
+  "map_prefix": "DataPC_", "map_suffix": ".forge", "map_exclude": ["DataPC_skins_", "DataPC_AC2MP_Whiteroom"]
+ },
+ "maps": {"prefixes": ["ACGAMP_", "ACGA_", "AC3MP_"]},
+ "capabilities": {"open": false, "source": true, "build": false, "install": false, "characters": false,
+                  "import_source": true}
+}

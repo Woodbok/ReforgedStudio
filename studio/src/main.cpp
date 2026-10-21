@@ -419,6 +419,20 @@ struct App {
         std::string error;
         double t0 = 0;
     } spa;
+    // File > Import a map from another game - the other games' installs (File > Settings), their maps with an import
+    // recipe; the recipe run (minutes), then the new map in the Maps list and opened
+    struct ImpUI {
+        bool open = false, asked = false, building = false, test = false;
+        json cat;                                     // {games: [{game, title, found, mp_dir, maps: [...]}], target}
+        int game = 0, map = -1;
+        char name[64] = "";
+        json result;
+        std::string error, test_pick;                 // (--import-test: "<GAME>:<map key>")
+        double t0 = 0;
+        std::string test_dest;                        // (--import-test: the first import, its import.json's write time)
+        uint64_t test_stamp = 0;
+        bool pick_tab = false;                        // (imp.game was set in code: its tab is selected on the next frame)
+    } imp;
     // scatter brush - copies of a palette (the selection's objects, or the Library's model) painted over the
     // ground: turned at random, on the ground (lowest of five samples), clear of each other and of other objects
     struct ScatterSrc { int id = -1, lib = -1; M4 m0 = M4::identity(); V3 lo, hi; std::string name; };
@@ -2200,6 +2214,200 @@ struct App {
             auto fails = spa.result.value("fails", json::array());
             if (fails.empty()) ImGui::TextColored(ImVec4(0.5f, 1, 0.6f, 1), "spmaps' checks: all %d passed", (int)spa.result.value("checks", json::array()).size());
             for (auto& f : fails) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", f.get<std::string>().c_str());
+        }
+        ImGui::End();
+    }
+
+    // ---- a map imported from another game
+    const json* imp_game() const {
+        if (!imp.cat.is_object()) return nullptr;
+        const json& g = imp.cat["games"];
+        return imp.game >= 0 && imp.game < (int)g.size() ? &g[imp.game] : nullptr;
+    }
+    const json* imp_map() const {
+        const json* g = imp_game();
+        if (!g) return nullptr;
+        const json& m = (*g)["maps"];
+        return imp.map >= 0 && imp.map < (int)m.size() ? &m[imp.map] : nullptr;
+    }
+    void imp_refresh() {
+        imp.error.clear();
+        // (the map picked stays picked: its game and key)
+        std::string g0 = imp_game() ? imp_game()->value("game", std::string()) : "", k0 = imp_map() ? imp_map()->value("key", std::string()) : "";
+        engine.request("import_maps", json::object(), [this, g0, k0](bool ok, const json& r, const std::string& e) {
+            if (!ok) { imp.error = e; return; }
+            imp.cat = r;
+            imp.map = -1;
+            const json& gs = imp.cat["games"];
+            if (g0.empty()) {
+                for (int k = 0; k < (int)gs.size(); k++) if (gs[k].value("found", false)) { imp.game = k; imp.pick_tab = true; break; }
+                return;
+            }
+            for (int k = 0; k < (int)gs.size(); k++) {
+                if (gs[k].value("game", std::string()) != g0) continue;
+                imp.game = k;
+                imp.pick_tab = true;
+                for (int i = 0; i < (int)gs[k]["maps"].size(); i++) if (gs[k]["maps"][i].value("key", std::string()) == k0) imp.map = i;
+            }
+        });
+    }
+    // the map's earlier import ({dest, name, imported, seconds, source_changed}), null when it has none
+    json imp_existing() const {
+        const json* m = imp_map();
+        return m && m->contains("existing") && (*m)["existing"].is_object() ? (*m)["existing"] : json();
+    }
+    void imp_open() {
+        imp.open = true;
+        if (imp.asked) return;
+        imp.asked = true;
+        imp_refresh();
+    }
+    // again: convert it once more even when it was imported before (the engine otherwise hands back that import)
+    void imp_build(bool again = false) {
+        const json* g = imp_game();
+        const json* m = imp_map();
+        if (!g || !m || !m->value("available", false) || imp.building) return;
+        json req = {{"game", g->value("game", std::string())}, {"key", m->value("key", std::string())}};
+        if (again) req["again"] = true;
+        if (imp.name[0]) req["name"] = std::string(imp.name);
+        imp.building = true;
+        imp.result = json();
+        imp.error.clear();
+        imp.t0 = ImGui::GetTime();
+        status = "Importing " + m->value("title", std::string()) + " from " + g->value("title", std::string()) +
+                 " (its conversion recipe - this takes minutes; the Log shows its steps)...";
+        add_log(status);
+        engine.request("import_build", {{"request", req}}, [this](bool ok, const json& r, const std::string& e) {
+            imp.building = false;
+            if (!ok) { imp.error = e; status = "Import: " + e; add_log(status); return; }
+            imp.result = r;
+            if (r.value("reused", false)) {               // (imported before: that import, opened)
+                status = "Opened the earlier import (" + r.value("imported", std::string()) + "): " + r.value("dest", std::string());
+                add_log(status);
+                open_map(r.value("dest", std::string()));
+                return;
+            }
+            status = "Imported: " + r.value("dest", std::string()) + " (" + std::to_string(r.value("seconds", 0)) + " s) - open it from here or the Maps list";
+            add_log(status);
+            imp_refresh();
+            engine.request("maps", json::object(), [this](bool ok2, const json& r2, const std::string&) {
+                if (!ok2) return;
+                maps.clear();
+                for (auto& m : r2["maps"]) maps.push_back({m["path"], m["title"], m["source"], m.value("kind", std::string())});
+            });
+        });
+    }
+    void ui_imp() {
+        if (!imp.open) return;
+        ImGui::SetNextWindowSize(ImVec2(820, 600), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin("Import a map from another game", &imp.open)) { ImGui::End(); return; }
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextDisabled("Pick a game and one of its multiplayer maps. Its conversion recipe (every rule learned porting "
+                            "that map) turns the game's own archive, read from your install, into an AC3 map: the new map "
+                            "lands in the Maps list, to open, edit, build and install like any other.");
+        ImGui::PopTextWrapPos();
+        if (!imp.cat.is_object()) {
+            ImGui::TextDisabled(imp.error.empty() ? "Reading the recipes and your installs..." : "");
+            if (!imp.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", imp.error.c_str());
+            ImGui::End();
+            return;
+        }
+        const json& gs = imp.cat["games"];
+        if (ImGui::BeginTabBar("##impgames")) {
+            for (int k = 0; k < (int)gs.size(); k++) {
+                std::string tab = gs[k].value("title", std::string()) + (gs[k].value("found", false) ? "" : " (not set)");
+                bool pick = imp.pick_tab && k == imp.game;
+                if (ImGui::BeginTabItem(tab.c_str(), nullptr, pick ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    if (imp.game != k && !imp.pick_tab) { imp.game = k; imp.map = -1; }
+                    ImGui::EndTabItem();
+                }
+            }
+            ImGui::EndTabBar();
+            imp.pick_tab = false;
+        }
+        const json* g = imp_game();
+        if (g) {
+            if (!g->value("found", false))
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "No install of this game found: set its folder in File > Settings.");
+            else ImGui::TextDisabled("Install: %s", g->value("mp_dir", std::string()).c_str());
+            ImGui::BeginChild("##impmaps", ImVec2(0, ImGui::GetContentRegionAvail().y - 150), true);
+            const json& ms = (*g)["maps"];
+            if (ImGui::BeginTable("##impt", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Map", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("Archive", ImGuiTableColumnFlags_WidthStretch, 1.4f);
+                ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 90);
+                ImGui::TableHeadersRow();
+                for (int i = 0; i < (int)ms.size(); i++) {
+                    const json& m = ms[i];
+                    bool av = m.value("available", false);
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::BeginDisabled(!av);
+                    std::string label = m.value("title", std::string()) + "##imp" + std::to_string(i);
+                    if (ImGui::Selectable(label.c_str(), imp.map == i, ImGuiSelectableFlags_SpanAllColumns)) imp.map = i;
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !av)
+                        ImGui::SetTooltip("%s", m.value("reason", std::string()).c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextDisabled("%s", m.value("file", std::string()).c_str());
+                    ImGui::TableNextColumn();
+                    if (m.contains("existing") && m["existing"].is_object())
+                        ImGui::TextColored(m["existing"].value("source_changed", false) ? ImVec4(1, 0.7f, 0.3f, 1) : ImVec4(0.5f, 0.85f, 0.5f, 1),
+                                           m["existing"].value("source_changed", false) ? "imported (source changed)" : "imported");
+                    else if (av) ImGui::TextDisabled("~%d min", m.value("minutes", 0));
+                    else ImGui::TextDisabled("not offered");
+                }
+                ImGui::EndTable();
+            }
+            ImGui::EndChild();
+        }
+        const json* m = imp_map();
+        json ex = imp_existing();
+        ImGui::PushTextWrapPos(0);
+        if (m) ImGui::TextDisabled("%s", m->value("note", std::string()).c_str());
+        if (ex.is_object()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.85f, 0.5f, 1), "Imported %s, %d s: %s", ex.value("imported", std::string()).c_str(),
+                               ex.value("seconds", 0), ex.value("dest", std::string()).c_str());
+            if (ex.value("source_changed", false))
+                ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "The source archive has changed since this import: Import again to convert the new one.");
+        }
+        ImGui::PopTextWrapPos();
+        bool can = m && m->value("available", false) && !imp.building && !engine.busy();
+        if (ex.is_object()) {
+            // imported before: the main button opens that import; converting again is a separate, confirmed step
+            ImGui::BeginDisabled(load_state == 1 || load_state == 2);
+            if (ImGui::Button("Open")) open_map(ex.value("dest", std::string()));
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!can);
+            if (ImGui::Button(imp.building ? "Importing..." : ex.value("source_changed", false) ? "Import again (the source changed)..." : "Import again..."))
+                ImGui::OpenPopup("Import again?");
+            ImGui::EndDisabled();
+            if (ImGui::BeginPopupModal("Import again?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Convert %s again? Its recipe runs again (~%d min) and replaces", m ? m->value("title", std::string()).c_str() : "",
+                            m ? m->value("minutes", 0) : 0);
+                ImGui::TextDisabled("%s", ex.value("dest", std::string()).c_str());
+                ImGui::TextDisabled("(edits saved in a project stay; a build made from the old import stays in your workspace)");
+                if (ImGui::Button("Import again", ImVec2(140, 0))) { imp_build(true); ImGui::CloseCurrentPopup(); }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+        } else {
+            ImGui::SetNextItemWidth(220);
+            ImGui::InputTextWithHint("##impname", "name (optional)", imp.name, sizeof imp.name);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!can);
+            if (ImGui::Button(imp.building ? "Importing..." : "Import")) imp_build();
+            ImGui::EndDisabled();
+        }
+        if (imp.building) { ImGui::SameLine(); ImGui::TextDisabled("%.0f s - the Log shows its steps", ImGui::GetTime() - imp.t0); }
+        if (!imp.error.empty()) ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", imp.error.c_str());
+        if (imp.result.is_object() && !ex.is_object() && !imp.result.value("reused", false)) {
+            if (ImGui::Button("Open the new map")) open_map(imp.result.value("dest", std::string()));
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s (%d s; the recipe's checks passed)", imp.result.value("dest", std::string()).c_str(),
+                                imp.result.value("seconds", 0));
         }
         ImGui::End();
     }
@@ -4004,7 +4212,13 @@ struct App {
         bool open = false, ingesting = false;
         char game[512] = "", sp[512] = "", work[512] = "", blender[512] = "";
         std::string error, ingest_msg;
+        // the other games' installs (read only: map imports), from their profiles (studio\games\<GAME>_MP.json)
+        struct Source { std::string game, title, exe, subdir; std::vector<std::string> guesses; char dir[512] = ""; };
+        std::vector<Source> sources;
+        std::string target_title = "Assassin's Creed III multiplayer";
     } setup;
+    void setup_profiles();
+    std::string setup_mp_dir(const SetupUI::Source& s, const std::string& folder) const;
     bool is_release_tree() const;
     json read_config() const;
     bool setup_needed() const;
@@ -4163,6 +4377,7 @@ void App::ui() {
     ui_help();
     ui_bare();
     ui_spa();
+    ui_imp();
     save_settings();
     tg_tick();
     if (!chr.open) {
@@ -4304,8 +4519,9 @@ void App::ui_menu() {
     }
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("Open project...", "Ctrl+O")) open_project();
-        if (is_release_tree() && ImGui::MenuItem("Settings (the game folder, workspace, Blender)...")) setup_open();
+        if (is_release_tree() && ImGui::MenuItem("Settings (the game folders, workspace, Blender)...")) setup_open();
         if (ImGui::MenuItem("New map from a singleplayer area...")) spa_open();
+        if (ImGui::MenuItem("Import a map from another game...")) imp_open();
         if (ImGui::MenuItem("Save project", "Ctrl+S", false, scene != nullptr)) save_project(false);
         if (ImGui::MenuItem("Save project as...", nullptr, false, scene != nullptr)) save_project(true);
         ImGui::Separator();
@@ -4406,7 +4622,8 @@ void App::ui_maps() {
     for (auto& m : maps) {
         if (!contains_ci(m.title + " " + m.source, map_filter)) continue;
         std::string section = m.kind == "AC3" ? "AC3 originals (untouched - a reference)"
-                              : m.kind == "sparea" ? "From singleplayer areas" : "Release (what the game runs)";
+                              : m.kind == "sparea" ? "From singleplayer areas"
+                              : m.kind == "import" ? "Imported from other games" : "Release (what the game runs)";
         if (section != last_kind) {
             ImGui::SeparatorText(section.c_str());
             last_kind = section;
@@ -4421,7 +4638,8 @@ void App::ui_maps() {
             }
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s\nDouble-click to open", m.source.c_str(), m.path.c_str());
-        std::string tag = m.kind == "AC3" ? "original" : m.kind == "sparea" ? "SP area" : m.source.substr(m.source.find('(') + 1);
+        std::string tag = m.kind == "AC3" ? "original" : m.kind == "sparea" ? "SP area" : m.kind == "import" ? "imported"
+                                                                                                         : m.source.substr(m.source.find('(') + 1);
         if (!tag.empty() && tag.back() == ')') tag.pop_back();
         ImGui::SameLine(std::max(120.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(tag.c_str()).x));
         ImGui::TextDisabled("%s", tag.c_str());
@@ -6490,6 +6708,9 @@ void App::test_tick() {
         }
         if (++test_frames < 30) return;                 // (the panels and the window are drawn from the next frames on)
         tlog("ok: the first-run setup opened (game folder guessed: " + std::string(setup.game[0] ? setup.game : "-") + ")");
+        for (auto& s : setup.sources)
+            tlog("  other game " + s.game + ": " + (s.dir[0] ? std::string(s.dir) + (setup_mp_dir(s, s.dir).empty() ? " (no multiplayer folder)" : " (found)")
+                                                            : std::string("not found")));
         shot("1_setup.png");
         test_wait = 6;
         test_step = 3001;
@@ -6499,6 +6720,17 @@ void App::test_tick() {
         strncpy_s(setup.work, (test_dir + "\\work").c_str(), sizeof setup.work - 1);
         setup_save();
         if (setup.open) { tlog("FAIL: the setup didn't save: " + setup.error); test_exit = 1; test_step = 99; return; }
+        {
+            // config version 2 with the first version's keys beside it
+            json c = read_config();
+            std::string mp = c.is_object() && c.contains("installs") ? c["installs"].value("AC3", json::object()).value("mp_dir", std::string()) : "";
+            bool v2 = c.is_object() && c.value("version", 0) == 2 && !mp.empty() && mp == c.value("game_dir", std::string());
+            std::string games;
+            if (c.is_object() && c.contains("installs"))
+                for (auto& [g, v] : c["installs"].items()) games += " " + g;
+            tlog(std::string(v2 ? "ok" : "FAIL") + ": config version 2 written (installs:" + games + "; game_dir kept for older readers)");
+            if (!v2) test_exit = 1;
+        }
         test_t0 = ImGui::GetTime();
         test_step = 3002;
         return;
@@ -6619,6 +6851,7 @@ void App::test_tick() {
         if (spl_test) { test_step = 1600; return; }
         if (spa.test) { test_step = 2100; return; }
         if (chr.test) { test_step = 2200; return; }
+        if (imp.test) { test_step = 2300; return; }
         shot("1_map.png");
         test_step = 20;
         return;
@@ -6761,6 +6994,170 @@ void App::test_tick() {
         return;
     case 2108:
         shot("2_opened.png");
+        test_wait = 3;
+        test_step = 99;
+        return;
+    case 2300:
+        // File > Import a map from another game - the installs and recipes listed, one map imported (its recipe's
+        // checks), the new map in the Maps list and opened
+        imp_open();
+        test_t0 = ImGui::GetTime();
+        test_step = 2301;
+        return;
+    case 2301: {
+        if (!imp.cat.is_object()) {
+            if (!imp.error.empty() || ImGui::GetTime() - test_t0 > 300) { tlog("FAIL: no import catalogue: " + imp.error); test_exit = 1; test_step = 99; }
+            return;
+        }
+        std::string want_game = imp.test_pick.substr(0, imp.test_pick.find(':')), want_key = imp.test_pick.substr(imp.test_pick.find(':') + 1);
+        const json& gs = imp.cat["games"];
+        imp.map = -1;
+        for (int k = 0; k < (int)gs.size(); k++) {
+            int avail = 0;
+            for (auto& m : gs[k]["maps"]) avail += m.value("available", false) ? 1 : 0;
+            tlog("  " + gs[k].value("game", std::string()) + ": " + (gs[k].value("found", false) ? "install found" : "no install") + ", " +
+                 std::to_string(gs[k]["maps"].size()) + " map(s) with a recipe, " + std::to_string(avail) + " offered");
+            if (gs[k].value("game", std::string()) != want_game) continue;
+            for (int i = 0; i < (int)gs[k]["maps"].size(); i++)
+                if (gs[k]["maps"][i].value("key", std::string()) == want_key) { imp.game = k; imp.map = i; imp.pick_tab = true; }
+        }
+        const json* m = imp_map();
+        if (!m) { tlog("FAIL: no recipe " + imp.test_pick); test_exit = 1; test_step = 99; return; }
+        if (!m->value("available", false)) { tlog("FAIL: " + imp.test_pick + " not offered: " + m->value("reason", std::string())); test_exit = 1; test_step = 99; return; }
+        tlog("ok: import catalogue read; importing " + m->value("title", std::string()) + " (" + m->value("source", std::string()) + ")");
+        snprintf(imp.name, sizeof imp.name, "IMPORT_test_%s", want_key.c_str());
+        test_wait = 12;
+        test_step = 2302;
+        return;
+    }
+    case 2302:
+        shot("1_import.png");
+        test_wait = 3;
+        test_step = 2303;
+        return;
+    case 2303:
+        imp_build();
+        test_t0 = ImGui::GetTime();
+        test_step = 2304;
+        return;
+    case 2304: {
+        if (imp.building) {
+            if (ImGui::GetTime() - test_t0 > 3 * 3600) { tlog("FAIL: the import took over three hours"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        if (!imp.result.is_object()) { tlog("FAIL: the import failed: " + imp.error); test_exit = 1; test_step = 99; return; }
+        std::string dest = imp.result.value("dest", std::string());
+        tlog("imported in " + std::to_string(imp.result.value("seconds", 0)) + " s: " + dest);
+        for (auto& c : imp.result.value("checks", json::array())) tlog("  " + c.get<std::string>());
+        bool ok = imp.result.value("verified", false) && file_exists(dest);
+        tlog(std::string(ok ? "ok" : "FAIL") + ": the recipe's checks on the new map");
+        if (!ok) test_exit = 1;
+        test_t0 = ImGui::GetTime();
+        test_step = 2305;
+        return;
+    }
+    case 2305: {
+        std::string dest = imp.result.value("dest", std::string());
+        auto it = std::find_if(maps.begin(), maps.end(), [&](const MapEntry& m) { return m.path == dest; });
+        if (it == maps.end()) {
+            if (ImGui::GetTime() - test_t0 > 60) { tlog("FAIL: the new map isn't in the Maps list"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        tlog(std::string(it->kind == "import" ? "ok" : "FAIL") + ": in the Maps list as \"" + it->title + "\" (" + it->source + ")");
+        if (it->kind != "import") test_exit = 1;
+        open_map(dest);
+        test_t0 = ImGui::GetTime();
+        test_step = 2306;
+        return;
+    }
+    case 2306:
+        if (load_state == 4) { tlog("FAIL: the new map didn't open: " + status); test_exit = 1; test_step = 99; return; }
+        if (!scene || load_state != 0 || scene->archive != imp.result.value("dest", std::string())) {
+            if (ImGui::GetTime() - test_t0 > 900) { tlog("FAIL: the new map never opened"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        tlog("ok: opened in the Studio: " + status + " - " + std::to_string(scene->entities.size()) + " objects");
+        if (scene->entities.size() < 100) { tlog("FAIL: too few objects for a whole map"); test_exit = 1; }
+        imp.open = false;
+        frame_all();
+        test_wait = 12;
+        test_step = 2307;
+        return;
+    case 2307:
+        shot("2_opened.png");
+        test_wait = 3;
+        test_step = 2310;
+        return;
+    case 2310: {
+        // the same map asked for again: the dialog shows the import, the request opens it and converts nothing
+        auto stamp = [](const std::string& p) {
+            WIN32_FILE_ATTRIBUTE_DATA a{};
+            if (!GetFileAttributesExW(widen(p).c_str(), GetFileExInfoStandard, &a)) return (uint64_t)0;
+            return ((uint64_t)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime;
+        };
+        imp.test_dest = imp.result.value("dest", std::string());
+        imp.test_stamp = stamp(imp.test_dest.substr(0, imp.test_dest.find_last_of("\\/")) + "\\import.json");
+        if (!imp.test_stamp) { tlog("FAIL: no import.json beside " + imp.test_dest); test_exit = 1; test_step = 99; return; }
+        open_map(test_archive);                         // (away from it, so opening it again shows)
+        imp.result = json();
+        imp_refresh();                                  // (keeps the map picked; its answer replaces the catalogue)
+        imp.cat = json();
+        imp.open = true;
+        test_t0 = ImGui::GetTime();
+        test_step = 2311;
+        return;
+    }
+    case 2311: {
+        if (!imp.cat.is_object() || !scene || load_state != 0 || scene->archive == imp.test_dest) {
+            if (ImGui::GetTime() - test_t0 > 300) { tlog("FAIL: the catalogue / the other map never came"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        json ex = imp_existing();
+        bool ok = ex.is_object() && ex.value("dest", std::string()) == imp.test_dest && !ex.value("source_changed", true);
+        tlog(std::string(ok ? "ok" : "FAIL") + ": the dialog shows the earlier import: " +
+             (ex.is_object() ? "Imported " + ex.value("imported", std::string()) + ", " + std::to_string(ex.value("seconds", 0)) + " s" : std::string("none")));
+        if (!ok) { test_exit = 1; test_step = 99; return; }
+        test_wait = 12;
+        test_step = 2312;
+        return;
+    }
+    case 2312:
+        shot("3_already_imported.png");
+        imp_build();                                    // (a second request, not "again")
+        test_t0 = ImGui::GetTime();
+        test_step = 2313;
+        return;
+    case 2313: {
+        if (imp.building) {
+            if (ImGui::GetTime() - test_t0 > 120) { tlog("FAIL: a second request for an imported map is converting it again"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        WIN32_FILE_ATTRIBUTE_DATA a{};
+        std::string res = imp.test_dest.substr(0, imp.test_dest.find_last_of("\\/")) + "\\import.json";
+        uint64_t now = GetFileAttributesExW(widen(res).c_str(), GetFileExInfoStandard, &a)
+                           ? ((uint64_t)a.ftLastWriteTime.dwHighDateTime << 32) | a.ftLastWriteTime.dwLowDateTime : 0;
+        bool ok = imp.result.is_object() && imp.result.value("reused", false) && imp.result.value("dest", std::string()) == imp.test_dest &&
+                  now == imp.test_stamp;
+        tlog(std::string(ok ? "ok" : "FAIL") + ": a second request opened the earlier import and ran no recipe (" +
+             std::to_string((int)(ImGui::GetTime() - test_t0)) + " s; import.json " + (now == imp.test_stamp ? "untouched" : "rewritten") + ")");
+        if (!ok) { test_exit = 1; test_step = 99; return; }
+        test_t0 = ImGui::GetTime();
+        test_step = 2314;
+        return;
+    }
+    case 2314:
+        if (load_state == 4) { tlog("FAIL: the earlier import didn't open: " + status); test_exit = 1; test_step = 99; return; }
+        if (!scene || load_state != 0 || scene->archive != imp.test_dest) {
+            if (ImGui::GetTime() - test_t0 > 600) { tlog("FAIL: the earlier import never opened"); test_exit = 1; test_step = 99; }
+            return;
+        }
+        tlog("ok: the earlier import opened: " + status);
+        imp.open = false;
+        test_wait = 12;
+        test_step = 2315;
+        return;
+    case 2315:
+        shot("4_reopened.png");
         test_wait = 3;
         test_step = 99;
         return;
@@ -8984,6 +9381,17 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
                 app.test_log.open(widen(app.test_dir + "/test.txt"));
                 app.full_log.open(widen(app.test_dir + "/log.txt"));
                 app.spa.test = true;
+                app.test_step = 0;
+            }
+            else if (std::wstring(argv[i]) == L"--import-test" && i + 2 < argc) {
+                // <a map to open first> <out> [<GAME>:<map key>, default ACR:souk]
+                app.test_archive = narrow(argv[i + 1]);
+                app.test_dir = narrow(argv[i + 2]);
+                app.imp.test_pick = i + 3 < argc && std::wstring(argv[i + 3]).rfind(L"--", 0) != 0 ? narrow(argv[i + 3]) : "ACR:souk";
+                make_dirs(argv[i + 2]);
+                app.test_log.open(widen(app.test_dir + "/test.txt"));
+                app.full_log.open(widen(app.test_dir + "/log.txt"));
+                app.imp.test = true;
                 app.test_step = 0;
             }
             else if (std::wstring(argv[i]) == L"--spl-test" && i + 2 < argc) {

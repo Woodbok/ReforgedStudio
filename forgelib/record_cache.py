@@ -9,6 +9,21 @@ DIR = os.path.join(HERE, 'out', 'clone', 'records')
 
 def digest(raw):
     return hashlib.sha1(raw).digest()[:16]
+_DIGESTS = {}
+OBJECT_MAGIC = b'3\xaa\xfbW'
+
+def record_digests(archive):
+    from forge import Forge
+    st = os.stat(archive)
+    key = (os.path.abspath(archive), st.st_size, st.st_mtime_ns)
+    if key not in _DIGESTS:
+        with Forge(archive) as f:
+            out = []
+            for r in f.records:
+                raw = f.read(r)
+                out.append((r, digest(raw), raw[4:8] == OBJECT_MAGIC))
+        _DIGESTS[key] = out
+    return _DIGESTS[key]
 
 class Store:
 

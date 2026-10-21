@@ -2,7 +2,8 @@
 
 Reforged Studio edits Assassin's Creed III multiplayer: its maps and its characters. It reads the game you own,
 shows everything in 3D, builds your changes into test files, installs them into the game and puts the originals back.
-It also turns singleplayer areas into new multiplayer maps.
+It also turns singleplayer areas into new multiplayer maps, and imports multiplayer maps from Assassin's Creed
+Revelations and Brotherhood.
 
 **F1** (Help > Keyboard shortcuts) lists every key.
 
@@ -15,7 +16,9 @@ The first start asks for:
   singleplayer models and areas;
 * **a workspace** - where builds, caches and the game's original files are kept (it grows to tens of GB: a character
   build is a full copy of the 6 GB DataPC);
-* **Blender** (optional) - for editing character meshes.
+* **Blender** (optional) - for editing character meshes;
+* **other games** (optional) - Assassin's Creed Revelations, Brotherhood and IV Black Flag installs found in the usual
+  places are filled in; change or clear any of them. The Studio only reads them (map imports) and never writes there.
 
 The Studio then reads the game once (its maps, its characters and the ids in use - a few minutes). **File >
 Settings...** changes any of this later.
@@ -125,6 +128,35 @@ With the singleplayer folder set:
   **Convert**. Minutes later the new map is in the Maps list under *From singleplayer areas*: open it and edit it like
   any other. Its conversion is checked (climbing, meshes, holes, boundaries, spawn points) and the results are shown.
 
+### Maps from other games
+
+**File > Import a map from another game** turns a multiplayer map of another Assassin's Creed into an AC3 map, read
+from your own install of that game (set in File > Settings):
+
+* **Revelations**: every multiplayer map - the Constantinople-era ones (Galata, Souk, Antioch, Jerusalem, Dyers,
+  Imperial, Juderia, Rhodes) and the Brotherhood-era ones it ships (Siena, Palazzio, Firenze, Mont St-Michel,
+  San Donato, San Marco, Rome).
+* **Brotherhood**: Forli, Alhambra, Monteriggioni and Pienza (these also read the Revelations install).
+* **Black Flag**: Tampa (Missionary Settlement), Havana, Fisher Village, Expedition, Prison, Pirate Headquarters,
+  Saba and Kingston. Their recipe reuses two water templates from Revelations' Jerusalem and Antioch, so it also needs
+  the Revelations install: the first Black Flag import imports those two maps first, unless you have already. Their
+  own sound banks (ambience, map sounds) are not converted: they play in a game whose sound package already carries
+  Black Flag's map banks, such as an acmpreforged install, and are missing elsewhere.
+
+Everything is read from your own installs: the Studio never uses maps converted somewhere else. Pick the game's tab
+and a map, then **Import**. The map's conversion recipe runs (minutes; the first import also indexes the installs it
+reads, which takes longer) and checks its result; the new map then appears in the Maps list under
+*Imported from other games*, and its models in the Library. Open, edit and build it like any other map.
+
+An imported map is kept in `<workspace>\imports` and never converted again by accident: the dialog shows it as
+*imported* (with its date), its button is **Open**, and **Import again...** (which asks first) is the only way to run
+its recipe once more - offered as *the source changed* when the game's archive has changed since.
+
+The imported map keeps the name the source map has in AC3 (for example `DataPC_ACFE_Souk.forge`). **Install** puts it into the
+game over a map of that name, so it plays in a game whose menus already list that map, such as an acmpreforged
+install. A stock AC3 has no menu entry for these maps: there the import opens, edits and builds in the Studio, but
+Install refuses.
+
 ## Characters
 
 * **Personas** (left): every character, by game. Click one to open it.
@@ -157,6 +189,11 @@ With the singleplayer folder set:
   `DataPC_DX11.forge`.
 * **"can't start the engine"**: run `setup.ps1` again (it makes the `.venv` the Studio runs on), or set
   `REFORGED_STUDIO_PYTHON` to a Python 3.10+ with numpy and Pillow.
+* **Imports and first map reads are slow**: `setup.ps1` builds `forgelib\native\ac3lzo.dll`, the native archive
+  codec (it needs the C++ Build Tools, as the program does); without it the Studio uses its Python codec, many times
+  slower. Run `setup.ps1` again to build it.
 * **Test in game refuses**: close the game first; a map can't be swapped while it runs.
+* **A map to import is greyed out**: hover it for the reason - usually the game's install isn't set (File >
+  Settings) or that map's archive isn't in it.
 * **A game file "is owned by Administrators"**: the message names the one-time command that gives the file back to
   your account.

@@ -13,7 +13,7 @@ trademark of Ubisoft Entertainment; this project is not affiliated with or endor
 | Dear ImGui | `studio/third_party/imgui` | MIT (`studio/third_party/imgui/LICENSE.txt`) |
 | ImGuizmo | `studio/third_party/ImGuizmo` | MIT (`studio/third_party/ImGuizmo/LICENSE`) |
 | nlohmann/json | `studio/third_party/nlohmann` | MIT (`studio/third_party/nlohmann/LICENSE.MIT`) |
-| LZO2A decoder / encoder | `forgelib/datafile.py`, `forgelib/lzo1x.py` | a Python expression of liblzo2's published algorithms (lzo-2.10, Markus F.X.J. Oberhumer), GPL v2 or later - the reason this project is GPL |
+| LZO2A / LZO1X decoder / encoder | `forgelib/datafile.py`, `forgelib/lzo1x.py`, `forgelib/native/ac3lzo.c` (built by `setup.ps1`) | a Python and a C expression of liblzo2's published algorithms (lzo-2.10, Markus F.X.J. Oberhumer), GPL v2 or later - the reason this project is GPL |
 | forgelib | `forgelib/` | this project's own (GPL v3 or later): the AC3 archive, map and character library |
 | ac3codec | `ac3codec/` | this project's own (GPL v3 or later): the FastLoad object codec, and the object schema read from the user's own AC3MP.exe |
 

@@ -10,3 +10,5 @@ out/
 *.glb
 *.ac3s
 *.ac3anim
+forgelib/native/obj/
+forgelib/native/*.dll

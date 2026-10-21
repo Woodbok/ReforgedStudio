@@ -1,0 +1,26 @@
+{
+ "game": "AC3", "edition": "MP", "title": "Assassin's Creed III multiplayer", "short": "AC3",
+ "install": {
+  "guesses": ["%PF86%\\Ubisoft\\Ubisoft Game Launcher\\games\\Assassin's Creed III",
+              "%PF86%\\Ubisoft\\Assassin's Creed III",
+              "%PF86%\\Steam\\steamapps\\common\\Assassin's Creed III"],
+  "mp_subdir": "multi",
+  "exe": "AC3MP.exe",
+  "markers": ["DataPC.forge"]
+ },
+ "container": {"version": 25, "compression": "lzo2a", "id_size": 4, "write": "forge25"},
+ "schema": {"from": "exe", "layout": "ac3"},
+ "archives": {
+  "shared": ["DataPC.forge", "DataPC_extra.forge", "DataPC_CoreFX.forge", "DataPC_Fire.forge", "DataPC_extraparams.forge"],
+  "map_prefix": "DataPC_", "map_suffix": ".forge", "map_exclude": ["DataPC_DX11"]
+ },
+ "maps": {
+  "stock": ["Animus", "Boston_Brewer", "Boston_Harbou", "Boston_Mill", "Fort_Wolcott", "Iceberg", "Plantation"],
+  "stock_pattern": "DataPC_AC3MP_{}.forge",
+  "prefixes": ["AC3MP_", "AC2MP_", "ACFE_", "ACGA_", "ACR_"]
+ },
+ "ids": {"fresh": [268435456, 4026531840], "min": 65536, "unmapped": [[4026531840, 4160749567]], "low16_nonzero": true,
+         "measured": true},
+ "capabilities": {"open": true, "source": true, "build": true, "install": true, "characters": true, "sp_areas": true,
+                  "import_target": true}
+}

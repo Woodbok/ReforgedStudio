@@ -40,6 +40,9 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import charview as C  # noqa: E402
+from ac3editor import games  # noqa: E402
+
+_TARGET = games.target()                  # (the target game's fresh-id rule)
 
 STUDIO_UNLOCK = (15000, 15999)
 STUDIO_STRINGS = (0x5AEF0000, 0x5AEFFFFF)
@@ -193,7 +196,7 @@ class Fresh:
         self.x = (seed * 2654435761) & 0xFFFFFFFF or 1
 
     def _bad(self, u):
-        if u < 0x10000 or 0xF0000000 <= u <= 0xF7FFFFFF or (u & 0xFFFF) == 0 or u in self.taken:
+        if not _TARGET.id_ok(u) or u in self.taken:
             return True
         i = np.searchsorted(self.used, u)
         if i < len(self.used) and self.used[i] == u:

@@ -105,7 +105,9 @@ def schema():
     if _SCHEMA is None:
         exe = schema_exe()
         st = os.stat(exe)
-        cpath = os.path.join(CACHE, "schema", f"AC3MP_{st.st_size}_{int(st.st_mtime)}_v{SCHEMA_VERSION}.json")
+        from . import games
+        stem = os.path.splitext(games.target().exe_name)[0]
+        cpath = os.path.join(CACHE, "schema", f"{stem}_{st.st_size}_{int(st.st_mtime)}_v{SCHEMA_VERSION}.json")
         if os.path.exists(cpath):
             _SCHEMA = _schema_model.load_json(cpath)
         else:

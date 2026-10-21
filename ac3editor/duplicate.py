@@ -24,9 +24,10 @@ import struct
 
 from ac3codec import Handle, Obj, Ptr, Ref, Root
 
-from . import mapdata as M
+from . import games, mapdata as M
 
-LOW, HIGH = 0x10000000, 0xF0000000
+TARGET = games.target()
+LOW, HIGH = TARGET.fresh_range
 
 
 def walk_values(v, fn):
@@ -68,7 +69,7 @@ class FreshIds:
         while True:
             u = self.rng.randrange(LOW, HIGH)
             b = struct.pack("<I", u)
-            if u not in self.used and (u & 0xFFFF) and b not in self.used:
+            if u not in self.used and TARGET.id_ok(u) and b not in self.used:
                 self.used.add(u)
                 self.used.add(b)
                 return b

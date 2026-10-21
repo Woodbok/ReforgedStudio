@@ -14,7 +14,7 @@ if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
 from ac3editor.workspace import WORK  # noqa: E402  (the workspace: builds, caches)
-from ac3editor import mapdata  # noqa: E402
+from ac3editor import games, mapdata  # noqa: E402
 
 FRIENDLY = {"ACFE_Souk": "Souk", "ACFE_Constantinople": "Galata", "ACFE_Antioch": "Antioch",
             "ACFE_Jerusalem": "Jerusalem", "ACFE_Dyers": "Dyers", "ACFE_Imperial": "Imperial", "ACFE_Juderia": "Juderia",
@@ -23,12 +23,10 @@ FRIENDLY = {"ACFE_Souk": "Souk", "ACFE_Constantinople": "Galata", "ACFE_Antioch"
             "AC3MP_Martinique": "Martinique", "AC3MP_Boston_Harbou": "Boston Harbour",
             "AC3MP_Charlestown_dlc": "Charlestown", "AC3MP_Martinique_dlc": "Martinique", "ACGA_KINGSTON_MAP": "Kingston",
             "ACGA_Pirate_Headqua": "Pirate Headquarters", "ACR_Rome_Multi": "Rome", "ACGA_Secret_Pirate_": "Secret Pirate"}
-STOCK_MAPS = ("Animus", "Boston_Brewer", "Boston_Harbou", "Boston_Mill", "Fort_Wolcott", "Iceberg", "Plantation")
-NOT_MAPS = ("DataPC.forge", "DataPC_extra.forge", "DataPC_CoreFX.forge", "DataPC_Fire.forge",
-            "DataPC_extraparams.forge")
-
-
-PREFIXES = ("AC3MP_", "AC2MP_", "ACFE_", "ACGA_", "ACR_")
+TARGET = games.target()                     # (the game the Studio edits: its stock maps, shared archives, map prefixes)
+STOCK_MAPS = TARGET.stock_maps
+NOT_MAPS = TARGET.shared
+PREFIXES = TARGET.prefixes
 
 
 def title(path):
@@ -55,7 +53,7 @@ def known_maps():
     except Exception:  # noqa: BLE001
         pristine = None
     for m in STOCK_MAPS:
-        p = os.path.join(pristine, f"DataPC_AC3MP_{m}.forge") if pristine else ""
+        p = os.path.join(pristine, TARGET.stock_file(m)) if pristine else ""
         if p and os.path.exists(p):
             stock.append(dict(path=p, title=title(p), source="AC3 original (untouched reference copy)", kind="AC3"))
     from ac3editor import install
@@ -69,7 +67,7 @@ def known_maps():
     else:                                      # none: the game folder's own maps (their kept originals once installed over)
         live = install.LIVE
         for base in sorted(os.listdir(live)) if os.path.isdir(live) else []:
-            if not (base.startswith("DataPC_") and base.endswith(".forge")) or base in NOT_MAPS or base.startswith("DataPC_DX11"):
+            if not TARGET.is_map_file(base):
                 continue
             src = install.original_of(base)
             src = src if os.path.exists(src) else os.path.join(live, base)
@@ -86,4 +84,9 @@ def known_maps():
         spa = sparea.built()
     except Exception:  # noqa: BLE001
         spa = []
-    return sorted(ported, key=lambda m: m["title"].lower()) + spa + stock
+    try:                                       # other games' maps imported in the Studio
+        import mapimport
+        imp = mapimport.built()
+    except Exception:  # noqa: BLE001
+        imp = []
+    return sorted(ported, key=lambda m: m["title"].lower()) + imp + spa + stock

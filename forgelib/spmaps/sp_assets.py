@@ -126,10 +126,6 @@ class Assets:
                 if 'diffuse' in self.obj(m)['name'].lower():
                     return m
             return maps[0] if maps else None
-        for u in T.u64s(o['body'], self.pool):
-            t = self.obj(u)
-            if t is not None and t['type'] == H['TextureMap'] and ('diffuse' in t['name'].lower()):
-                return u
         return None
 
     def material_layers(self, mat_uid):

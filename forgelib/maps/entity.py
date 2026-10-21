@@ -25,13 +25,12 @@ def components(body):
     if bv < 0:
         return None
     end_of_list = bv - ENTITY_TRAILER
-    rev = {v: k for k, v in ids.items()}
+    rev = _rev(ids)
     starts = []
-    for k in range(FIRST, end_of_list - 10 + 1):
-        if body[k:k + 2] in FLAGS:
-            name = rev.get(struct.unpack_from('<I', body, k + 6)[0])
-            if name and _is_component(name):
-                starts.append((k, name))
+    for k in _component_flags(body, FIRST, end_of_list - 10):
+        name = rev.get(struct.unpack_from('<I', body, k + 6)[0])
+        if name and _is_component(name):
+            starts.append((k, name))
     if not starts or starts[0][0] != FIRST:
         return None
     if len(starts) != count:
@@ -41,6 +40,27 @@ def components(body):
         nxt = starts[i + 1][0] if i + 1 < len(starts) else end_of_list
         out.append((k, nxt, name))
     return out
+_REV = {}
+
+def _rev(ids):
+    if _REV.get('n') != len(ids):
+        _REV.update(n=len(ids), rev={v: k for k, v in ids.items()})
+    return _REV['rev']
+
+def _component_flags(body, first, last):
+    if not hasattr(body, 'find'):
+        body = bytes(body)
+    ks = []
+    for flag in FLAGS:
+        k = body.find(flag, first)
+        while 0 <= k <= last:
+            ks.append(k)
+            k = body.find(flag, k + 1)
+    ks.sort()
+    return ks
+
+def _component_flags_py(body, first, last):
+    return [k for k in range(first, last + 1) if body[k:k + 2] in FLAGS]
 
 def exact_end(comps, end):
     return end - 1 if end == comps[-1][1] else end

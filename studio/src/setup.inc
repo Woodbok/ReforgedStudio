@@ -47,22 +47,96 @@ json App::read_config() const {
     try { return json::parse(f); } catch (...) { return json(); }
 }
 
+// a value of the config's AC3 install: installs.AC3.<key> (config version 2), else the first version's key
+static std::string config_ac3(const json& c, const char* key, const char* first_name) {
+    if (!c.is_object()) return "";
+    if (c.contains("installs") && c["installs"].is_object() && c["installs"].contains("AC3") && c["installs"]["AC3"].is_object()) {
+        std::string v = c["installs"]["AC3"].value(key, std::string());
+        if (!v.empty()) return v;
+    }
+    return c.value(first_name, std::string());
+}
+
+static std::string expand_pf(std::string p) {
+    char pf86[MAX_PATH] = "C:\\Program Files (x86)", pf[MAX_PATH] = "C:\\Program Files";
+    GetEnvironmentVariableA("ProgramFiles(x86)", pf86, sizeof pf86);
+    GetEnvironmentVariableA("ProgramFiles", pf, sizeof pf);
+    for (auto [k, v] : {std::pair<std::string, std::string>{"%PF86%", pf86}, {"%PF%", pf}}) {
+        size_t i = p.find(k);
+        if (i != std::string::npos) p.replace(i, k.size(), v);
+    }
+    return p;
+}
+
+void App::setup_profiles() {
+    if (!setup.sources.empty()) return;
+    std::string dir = repo + "\\studio\\games\\";
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(widen(dir + "*_MP.json").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    std::vector<std::string> files;
+    do files.push_back(narrow(fd.cFileName)); while (FindNextFileW(h, &fd));
+    FindClose(h);
+    std::sort(files.begin(), files.end());
+    for (const char* g : {"ACR", "ACB", "AC4"})               // (the chain's order)
+        for (auto& f : files) {
+            if (f != std::string(g) + "_MP.json") continue;
+            std::ifstream in(widen(dir + f));
+            json p;
+            try { p = json::parse(in); } catch (...) { continue; }
+            SetupUI::Source s;
+            s.game = p.value("game", std::string(g));
+            s.title = p.value("title", s.game);
+            auto inst = p.value("install", json::object());
+            s.exe = inst.value("exe", std::string());
+            s.subdir = inst.value("mp_subdir", std::string("multi"));
+            for (auto& x : inst.value("guesses", json::array())) s.guesses.push_back(expand_pf(x.get<std::string>()));
+            setup.sources.push_back(s);
+        }
+}
+
+// a folder the user picked (the game folder or its multiplayer folder) -> the multiplayer folder, "" when neither is
+std::string App::setup_mp_dir(const SetupUI::Source& s, const std::string& folder) const {
+    std::string f = folder;
+    while (!f.empty() && (f.back() == '\\' || f.back() == '/')) f.pop_back();
+    if (f.empty()) return "";
+    // (the multiplayer subfolder first: the game folder holds singleplayer archives under the same names)
+    if (file_exists(f + "\\" + s.subdir + "\\DataPC.forge")) return f + "\\" + s.subdir;
+    size_t cut = f.find_last_of("\\/");
+    if (file_exists(f + "\\DataPC.forge") && cut != std::string::npos && file_exists(f.substr(0, cut) + "\\" + s.exe)) return f;
+    return "";
+}
+
 bool App::setup_needed() const {
     if (!is_release_tree()) return false;                 // (a development checkout, without forgelib\, needs no setup)
     json c = read_config();
-    return !c.is_object() || !file_exists(c.value("game_dir", std::string()) + "\\DataPC.forge");
+    return !c.is_object() || !file_exists(config_ac3(c, "mp_dir", "game_dir") + "\\DataPC.forge");
 }
 
 void App::setup_open() {
     json c = read_config();
     auto put = [](char* buf, size_t n, const std::string& v) { strncpy_s(buf, n, v.c_str(), n - 1); };
-    std::string game = c.is_object() ? c.value("game_dir", std::string()) : "";
+    setup_profiles();
+    for (auto& s : setup.sources) {                       // the configured install, else the first usual place found
+        std::string have;
+        if (c.is_object() && c.contains("installs") && c["installs"].is_object() && c["installs"].contains(s.game) &&
+            c["installs"][s.game].is_object()) {
+            const json& i = c["installs"][s.game];
+            have = i.value("root", std::string());
+            if (have.empty()) have = i.value("mp_dir", std::string());
+        }
+        if (have.empty() && s.game == "ACR" && c.is_object()) have = c.value("acr_dir", std::string());
+        if (have.empty())
+            for (auto& g : s.guesses) if (!setup_mp_dir(s, g).empty()) { have = g; break; }
+        put(s.dir, sizeof s.dir, have);
+    }
+    std::string game = config_ac3(c, "mp_dir", "game_dir");
     if (game.empty()) {                                     // the launcher's usual place
         std::string guess = "C:\\Program Files (x86)\\Ubisoft\\Ubisoft Game Launcher\\games\\Assassin's Creed III\\multi";
         if (file_exists(guess + "\\DataPC.forge")) game = guess;
     }
     put(setup.game, sizeof setup.game, game);
-    put(setup.sp, sizeof setup.sp, c.is_object() ? c.value("sp_dir", std::string()) : "");
+    put(setup.sp, sizeof setup.sp, config_ac3(c, "sp_dir", "sp_dir"));
     std::string work = c.is_object() ? c.value("workspace", std::string()) : "";
     if (work.empty()) {
         char up[MAX_PATH];
@@ -96,11 +170,37 @@ void App::setup_save() {
         setup.error = "No DataPC.forge in that folder: pick the game's multiplayer folder (...\\Assassin's Creed III\\multi).";
         return;
     }
+    std::vector<std::pair<SetupUI::Source*, std::string>> picked;   // (each other game's multiplayer folder, "" = none)
+    for (auto& s : setup.sources) {
+        std::string mp = setup_mp_dir(s, s.dir);
+        if (s.dir[0] && mp.empty()) {
+            setup.error = "No " + s.title + " there: pick its game folder (with " + s.exe + " and the multi folder), or clear the field.";
+            return;
+        }
+        picked.push_back({&s, mp});
+    }
     json c = read_config();
     if (!c.is_object()) c = json::object();
+    // config version 2: the target and every game's install; the first version's keys are kept beside them, so an
+    // older Studio reading the same file still finds the game
+    c["version"] = 2;
+    c["target"] = {{"game", "AC3"}, {"edition", "MP"}};
+    if (!c.contains("installs") || !c["installs"].is_object()) c["installs"] = json::object();
+    json& ac3 = c["installs"]["AC3"];
+    if (!ac3.is_object()) ac3 = json::object();
+    ac3["mp_dir"] = game;
+    ac3["root"] = game.substr(0, game.find_last_of("\\/"));
+    for (const char* k : {"release_set", "pristine_dir"})
+        if (!ac3.contains(k) && c.contains(k)) ac3[k] = c[k];
     c["game_dir"] = game;
     c["workspace"] = std::string(setup.work);
-    if (setup.sp[0]) c["sp_dir"] = std::string(setup.sp); else c.erase("sp_dir");
+    if (setup.sp[0]) { c["sp_dir"] = std::string(setup.sp); ac3["sp_dir"] = std::string(setup.sp); }
+    else { c.erase("sp_dir"); ac3.erase("sp_dir"); }
+    for (auto& [s, mp] : picked) {
+        if (mp.empty()) { c["installs"].erase(s->game); if (s->game == "ACR") c.erase("acr_dir"); continue; }
+        c["installs"][s->game] = {{"root", mp.substr(0, mp.find_last_of("\\/"))}, {"mp_dir", mp}};
+        if (s->game == "ACR") c["acr_dir"] = mp;
+    }
     if (setup.blender[0]) c["blender"] = std::string(setup.blender); else c.erase("blender");
     std::string path = config_file();
     std::wstring wdir = widen(path.substr(0, path.find_last_of("\\/")));
@@ -142,6 +242,7 @@ void App::ui_setup() {
                        "the multiplayer folder that holds DataPC.forge (an acmpreforged install has every persona and map "
                        "the Studio knows). It never changes a game file until you press Install, and it keeps the game's "
                        "own copy first, so Put back always works.");
+    ImGui::Text("Game: %s", setup.target_title.c_str());
     ImGui::Separator();
     auto row = [&](const char* label, char* buf, size_t n, const char* hint, bool folder, const wchar_t* title) {
         ImGui::PushID(label);
@@ -162,6 +263,24 @@ void App::ui_setup() {
     ImGui::TextColored(ok_game ? ImVec4(0.5f, 0.85f, 0.5f, 1) : ImVec4(1, 0.6f, 0.3f, 1), ok_game ? "DataPC.forge found" : "no DataPC.forge there yet");
     row("The singleplayer install (optional: singleplayer models and areas)", setup.sp, sizeof setup.sp,
         "default: the multiplayer folder's parent", true, L"The singleplayer install (with DataPC_DX11.forge)");
+    if (!setup.sources.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Other games (optional, read only - File > Import a map from another game). Found ones are filled in;");
+        ImGui::TextDisabled("clear a field to leave that game out.");
+        for (auto& s : setup.sources) {
+            std::string name = s.title.size() > 12 && s.title.compare(s.title.size() - 12, 12, " multiplayer") == 0
+                                   ? s.title.substr(0, s.title.size() - 12) : s.title;
+            std::string label = name + " - its game folder";
+            row(label.c_str(), s.dir, sizeof s.dir, ("...\\" + name + " (with " + s.exe + ")").c_str(),
+                true, widen("The game folder of " + name).c_str());
+            if (s.dir[0]) {
+                bool ok = !setup_mp_dir(s, s.dir).empty();
+                ImGui::TextColored(ok ? ImVec4(0.5f, 0.85f, 0.5f, 1) : ImVec4(1, 0.6f, 0.3f, 1),
+                                   ok ? "multiplayer folder found" : "no multiplayer folder (multi\\DataPC.forge) there");
+            }
+        }
+        ImGui::Spacing();
+    }
     row("Your workspace (builds, caches, the game's originals the Studio keeps - can grow to tens of GB)", setup.work,
         sizeof setup.work, "Documents\\Reforged Studio", true, L"Where Reforged Studio keeps its work");
     row("Blender (optional: editing character meshes)", setup.blender, sizeof setup.blender, "blender.exe", false, nullptr);
