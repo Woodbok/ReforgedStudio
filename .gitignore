@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+python/
+studio/build/
+forgelib/out/
+out/
+*.forge
+*.dds
+*.glb
+*.ac3s
+*.ac3anim
